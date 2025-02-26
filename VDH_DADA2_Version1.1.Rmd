@@ -1,0 +1,203 @@
+---
+title: "Final_Analysis"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r}
+# Installing DADA2 
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("dada2", version = "3.20")
+library(dada2)
+```
+#Extract files from folder
+```{r}
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+list.files(Final_path)
+
+```
+# Define name of samples in folder
+```{r}
+final_fnFs_clean_merged <- sort(list.files(Final_path, pattern="_effective.fastq", full.names = TRUE))
+final.clean.merged.sample.names<- sapply(strsplit(basename(final_fnFs_clean_merged), "_"), `[`, 1)
+final.clean.merged.sample.names
+
+```
+
+#Inspect a file to check read quality
+```{r}
+plotQualityProfile(final_fnFs_clean_merged[1:10])
+
+head(final_fnFs_clean_merged[[1:10]])
+```
+
+# Filter and trim the merged reads (adjust parameters as needed)
+```{r}
+final_filtered_path <- file.path(Final_path, "final_filtered")
+final_filtered_files <- file.path(final_filtered_path, paste0(final.clean.merged.sample.names, "_filtered.fastq.gz"))
+```
+
+
+```{r}
+
+# Apply filtering (adjust parameters based on your data)
+final_filtered_out <- filterAndTrim(final_fnFs_clean_merged, final_filtered_files,
+                               truncLen=0,  # No truncation since reads are already merged
+                               maxN=0,      # Discard reads with Ns
+                               maxEE=2.0,   # Maximum expected errors
+                               truncQ=2,    # Truncate reads at the first instance of a quality score less than or equal to 2
+                               compress=TRUE,
+                               multithread=TRUE)  # Enable multithreading if available
+
+```
+
+```{r}
+# Learn the error rates
+final_err <- learnErrors(final_filtered_files, multithread=TRUE)
+
+```
+
+```{r}
+# Plot the error rates
+plotErrors(final_err, nominalQ=TRUE)
+```
+
+
+```{r}
+# Dereplicate the filtered reads
+final_derep <- derepFastq(final_filtered_files)
+```
+
+```{r}
+# Run the DADA2 algorithm
+final_dada <- dada(final_derep, err=final_err, multithread=TRUE)
+```
+
+
+```{r}
+# Construct the sequence table
+final_seqtab <- makeSequenceTable(final_dada)
+```
+
+```{r}
+# Remove chimeras
+final_seqtab_nochim <- removeBimeraDenovo(final_seqtab, method="consensus", multithread=TRUE)
+```
+
+```{r}
+# Inspect the sequence table dimensions
+dim(final_seqtab_nochim)
+sum(final_seqtab_nochim)/sum(final_seqtab)
+```
+
+```{r}
+# Assign taxonomy using a reference database (e.g., SILVA)
+final_taxa <- assignTaxonomy(final_seqtab_nochim, "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2/silva_nr99_v138.2_toSpecies_trainset.fa.gz", multithread=TRUE)
+
+```
+
+```{r}
+# Add species-level assignment if desired
+final_taxa <- addSpecies(final_taxa,"/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2/silva_v138.2_assignSpecies.fa.gz")
+
+
+```
+
+```{r}
+# Inspect the taxonomic assignments
+taxa_print <- final_taxa  # Removing sequence rownames for display
+rownames(taxa_print) <- NULL
+print(taxa_print)
+```
+
+
+```{r}
+# Save the results to files
+saveRDS(final_seqtab_nochim, file.path(Final_path, "final_seqtab_nochim.rds"))
+saveRDS(final_taxa, file.path(Final_path, "final_taxa.rds"))
+
+# Optional: Export the sequence table and taxonomy as CSV files
+write.csv(final_seqtab_nochim, file.path(Final_path, "Final_sequence_table.csv"))
+write.csv(final_taxa, file.path(Final_path, "Final_taxonomic_assignments.csv"))
+
+```
+
+
+
+
+
+
+
+```{r}
+#Import and downloading phyloseq
+if (!requireNamespace("BiocMannager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("phyloseq")
+BiocManager::install("Microbiome")
+BiocManager::install("ggplot2")
+
+
+library(phyloseq)
+library(ggplot2)
+library(Microbiome)
+library(tidyverse )
+```
+
+```{r}
+list.files(path)
+```
+
+```{r}
+final_sampleID
+final_sample_type
+```
+
+```{r}
+#Extract variables from file names 
+final_samples_out <- rownames(final_seqtab_nochim)
+final_sampleID <- sapply(strsplit(final_samples_out, "_"), `[`, 1)
+final_sample_type <- substr(sampleID,5,5)
+final_sample_num <- substr(sampleID,3,4)
+final_location <- substr(sampleID,1,2)
+```
+
+```{r}
+#Make sure R treats the SM samples as S = sediment samples and blanks as blanks
+final_sample_type[final_sample_type == "M"] <- "S"  # Treat "SM" as "S" (Sediment)
+final_sample_type[final_sample_type == ""] <- "B"
+```
+
+```{r}
+#Inspect final variables extracted
+final_samples_out
+final_sampleID
+final_sample_type
+final_sample_num
+final_location
+```
+
+
+```{r}
+#Create data frame with sample data for phyloseq
+final_samdf <- data.frame(SubjectID=final_sampleID, Location=final_location, SampleType=final_sample_type)
+rownames(final_samdf) <- final_samples_out
+head(final_samdf)
+```
+
+```{r}
+#Hand off to phyloseq
+final_ps <- phyloseq(otu_table(final_seqtab_nochim, taxa_are_rows=FALSE), 
+               sample_data(final_samdf), 
+               tax_table(final_taxa))
+
+final_ps
+```
+
+```{r}
+top20 <- names(sort(taxa_sums(final_ps), decreasing=TRUE))[1:30]
+ps.top20 <- transform_sample_counts(final_ps, function(OTU) log(1 + OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+plot_bar(ps.top20, x="Location", fill="Class") 
+```
+
