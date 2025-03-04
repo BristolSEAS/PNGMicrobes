@@ -4,26 +4,133 @@ output: html_document
 date: "2025-02-28"
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+#Install DADA2
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("dada2", version = "3.20")
+library(dada2)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+#Get files from folder 
+```{r}
+Final_Path <- "/Users/emilyhudson/Documents/University/Masters/Data/Novogene_Organisms/Organisms_Reads/Unzipped_Clean_Organisms"
+list.files(Final_Path)
+```
+#Define name of samples in folder
+```{r}
+final_fnFs_clean_merged <- sort(list.files(Final_Path, pattern=".effective.fastq", full.names = TRUE))
+final.clean.merged.sample.names<- sapply(strsplit(basename(final_fnFs_clean_merged), "_"), `[`, 1)
+final.clean.merged.sample.names
+```
+#Inspect read quality 
+```{r}
+plotQualityProfile(final_fnFs_clean_merged[1:10])
+```
+```{r}
+final_filtered_path <- file.path(Final_Path, "final_filtered")
+if (!dir.exists(final_filtered_path)) {
+  dir.create(final_filtered_path, recursive = TRUE)
+}
+file.exists(final_filtered_path) # checking if folder exists
+final_filtered_files <- file.path(final_filtered_path, paste0(final.clean.merged.sample.names, "_filtered.fastq.gz"))
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+#Testing how many reads would be removed - see if it is substantial of under 5% (just to check removal)
+```{r}
+ 
+library(ShortRead)
+ 
+# Function to count Ns in a FASTQ file
+count_Ns <- function(fastq_file) {
+  reads <- readFastq(fastq_file)
+  sequences <- sread(reads)
+  n_counts <- vcountPattern("N", sequences)
+  return(n_counts)
+}
+ 
+# Apply to all files
+n_counts_list <- lapply(final_fnFs_clean_merged, count_Ns)
+ 
+# Summarize the prevalence of Ns
+summary_n_counts <- sapply(n_counts_list, function(x) {
+  c(
+    Total_Reads = length(x),
+    Reads_with_Ns = sum(x > 0),
+    Percent_Reads_with_Ns = mean(x > 0) * 100,
+    Mean_Ns_per_Read = mean(x),
+    Max_Ns_per_Read = max(x)
+  )
+})
+ 
+# Print summary
+print(summary_n_counts)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+#Removing ambiguous reads 
+```{r}
+final_filtered_out <- filterAndTrim(final_fnFs_clean_merged, final_filtered_files,
+                               truncLen=0,  # No truncation since reads are already merged
+                               maxN=0,      # Discard reads with Ns
+                               maxEE=2.0,   # Maximum expected errors
+                               truncQ=2,    # Truncate reads at the first instance of a quality score less than or equal to 2
+                               compress=TRUE,
+                               multithread=TRUE) 
+```
+
+
+#Error rates 
+```{r}
+final_err <- learnErrors(final_filtered_files, multithread=TRUE)
+```
+#plot error 
+```{r}
+plotErrors(final_err, nominalQ=TRUE)
+```
+
+```{r}
+final_derep <- derepFastq(final_filtered_files)
+```
+```{r}
+final_dada <- dada(final_derep, err=final_err, multithread=TRUE)
+```
+
+```{r}
+# Construct the sequence table
+final_seqtab <- makeSequenceTable(final_dada)
+```
+
+```{r}
+# Remove chimeras
+final_seqtab_nochim <- removeBimeraDenovo(final_seqtab, method="consensus", multithread=TRUE)
+```
+
+```{r}
+# Inspect the sequence table dimensions
+dim(final_seqtab_nochim)
+sum(final_seqtab_nochim)/sum(final_seqtab)
+```
+
+
+#Assign taxonomy to sequences 
+```{r}
+
+# Assign taxonomy using a reference database (e.g., SILVA)
+final_taxa <- assignTaxonomy(final_seqtab_nochim, "/Users/emilyhudson/Documents/University/Masters/Data/Novogene_Organisms/Organisms_Reads/Unzipped_Clean_Organisms/taxonomy/silva_nr99_v138.2_toSpecies_trainset.fa.gz", multithread=TRUE)
+
+```
+
+```{r}
+# Add species-level assignment if desired
+final_taxa <- addSpecies(final_taxa,"/Users/emilyhudson/Documents/University/Masters/Data/Novogene_Organisms/Organisms_Reads/Unzipped_Clean_Organisms/taxonomy/silva_v138.2_assignSpecies.fa.gz")
+
+
+```
+``` 
+
+
+
+
