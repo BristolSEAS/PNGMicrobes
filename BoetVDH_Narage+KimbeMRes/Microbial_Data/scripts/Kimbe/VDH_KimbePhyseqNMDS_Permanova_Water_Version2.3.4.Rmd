@@ -1,0 +1,123 @@
+---
+title: "VDH_KimbePhyseqNMDS_Permanova_Water_Version2.3.4"
+output: html_document
+date: "2025-10-23"
+---
+```{r}
+# Load necessary libraries
+library(phyloseq)  # For working with phyloseq objects
+library(vegan)     # For NMDS and distance matrix calculations
+library(ggplot2)   # For creating plots
+install.packages('viridis')
+library(viridis)   # For the viridis color scale
+library(dplyr)     # For data manipulation
+```
+
+```{r}
+# Summon filtered physeq object 
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+
+# Filter for sediment samples and transform data
+kimbe_water <- subset_samples(kimbe_phyloseq_rare, SampleType == "W")
+sample_data(kimbe_phyloseq_rare)
+# Tax glom at Family level 
+kimbe_water_glom <- tax_glom(kimbe_water, taxrank = "Family", bad_empty = c(NA), NArm = TRUE)  
+
+# Perform NMDS
+nmds_kimbe_water <- ordinate(kimbe_water, method = "NMDS", distance = "bray")
+
+# Check NMDS stress
+nmds_kimbe_water$stress  # Should ideally be < 0.2
+
+# Create plotting dataframe
+kimbe_nmds_df_water <- data.frame(
+  NMDS1 = nmds_kimbe_water$points[,1],
+  NMDS2 = nmds_kimbe_water$points[,2],
+  Location = sample_data(kimbe_water)$Location, 
+  Depth = sample_data(kimbe_water)$Depth
+)
+
+my_font <- "Verdana"
+location_labels <- c("KA" = "Lagoon A", "KD" = "Lagoon D", "KE" = "Lagoon E", "KM" = "Control")
+# Create enhanced NMDS plot
+kimbe_nmds_plot_water <- ggplot(kimbe_nmds_df_water, aes(x = NMDS1, y = NMDS2, color = Location, shape = Depth)) +
+  geom_point(size = 2.5)  +
+   ggforce::geom_mark_ellipse(aes(fill = Location), expand = 0, alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  scale_color_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  scale_fill_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  theme_classic() +
+  theme(
+    text = element_text(family = my_font),
+    axis.text = element_text(family = my_font, size = 8, face = "bold"),
+    plot.title = element_text(family = my_font, size = 11, face = "bold", hjust = 0.5),
+    axis.line = element_blank(),
+    panel.border = element_rect(linewidth = 1, fill = "transparent"),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  labs(
+    title = "",
+    x = "NMDS1",
+    y = "NMDS2"
+  )
+# Display and save the plot
+print(kimbe_nmds_plot_water)
+
+ggsave( "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/figures/Kimbe/kimbe_nmds_plot_water.png", plot = kimbe_nmds_plot_water, width = 8, height = 5  , dpi = 300)
+save(kimbe_nmds_df_water, file = "kimbe_nmds_df_water.RData")
+
+```
+
+```{r}
+library(vegan)
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+library(pairwiseAdonis)
+
+# Calculate Bray-Curtis distances
+kimbe_bray_water <- phyloseq::distance(kimbe_water_glom, method = "bray")
+
+# Extract sample data
+kimbe_metadata_water <- data.frame(sample_data(kimbe_water_glom))
+
+# PERMANOVA
+kimbe_adonis2_result_water <- adonis2(kimbe_bray_water ~ Location * DepthCategory, data = kimbe_metadata_water, permutations = 999)
+
+print(kimbe_adonis2_result_water)
+```
+
+```{r}
+library(pairwiseAdonis)
+
+# Run pairwise PERMANOVA for Location
+pairwise.adonis2(
+  kimbe_bray_water ~ Location,
+  data = kimbe_metadata_water,
+  permutations = 999,
+  p.adjust.m = "bonferroni"  # adjust p-values for multiple testing
+)
+
+# OR run pairwise PERMANOVA for DepthCategory
+pairwise.adonis2(
+  kimbe_bray_water ~ DepthCategory,
+  data = kimbe_metadata_water,
+  permutations = 999,
+  p.adjust.m = "bonferroni"
+)
+
+# OR for Location × DepthCategory interaction
+kimbe_metadata_water$Group <- interaction(kimbe_metadata_water$Location, kimbe_metadata_water$DepthCategory)
+
+pairwise.adonis2(
+  kimbe_bray_water ~ Group,
+  data = kimbe_metadata_water,
+  permutations = 999,
+  p.adjust.m = "bonferroni"
+)
+
+```

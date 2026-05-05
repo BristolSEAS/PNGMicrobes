@@ -1,0 +1,266 @@
+---
+title: "VDH_KimbePhyseqGLMShannon_Version2.3.3"
+output: html_document
+date: "2025-10-23"
+---
+
+# Load Required Libraries
+```{r}
+library(phyloseq)
+library(tidyverse)
+library(vegan)
+library(glmmTMB)
+library(emmeans)
+library(ggplot2)
+library(ggeffects)
+```
+
+# Load File Path
+
+```{r}
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+narage_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+```
+
+# Subset Water and Sediment Samples
+
+```{r}
+# Separate by Sample Type
+kimbe_sample_data_df <- data.frame(sample_data(kimbe_phyloseq_rare))
+
+kimbe_sediment_samples <- rownames(kimbe_sample_data_df[kimbe_sample_data_df$SampleType == "S", ])
+kimbe_ps_sediment <- prune_samples(kimbe_sediment_samples, kimbe_phyloseq_rare)
+kimbe_ps_sediment <- subset_samples(kimbe_ps_sediment, sample_names(kimbe_ps_sediment) != "KA01S_filtered.fastq.gz")
+
+kimbe_water_samples <- rownames(kimbe_sample_data_df[kimbe_sample_data_df$SampleType == "W", ])
+kimbe_ps_water <- prune_samples(kimbe_water_samples, kimbe_phyloseq_rare)
+
+
+```
+
+# Calculate Shannon values for Water and Sediment and merge with Metadata
+
+```{r}
+# Estimate richness (Shannon) for Sediment
+kimbe_shannon_df_S <- estimate_richness(kimbe_ps_sediment, measures = "Shannon") %>%
+  rownames_to_column(var = "SampleID")
+
+# Merge with metadata
+kimbe_metadata_S <- sample_data(kimbe_ps_sediment) %>%
+  data.frame() %>%
+  rownames_to_column(var = "SampleID")
+
+kimbe_shannon_combined_df_S <- left_join(kimbe_shannon_df_S, kimbe_metadata_S, by = "SampleID") %>% 
+  mutate_if(is.character, as.factor)
+```
+
+```{r}
+# Estimate richness (Shannon) for Water
+kimbe_shannon_df_W <- estimate_richness(kimbe_ps_water, measures = "Shannon") %>%
+  rownames_to_column(var = "SampleID")
+
+# Merge with metadata
+kimbe_metadata_W <- sample_data(kimbe_ps_water) %>%
+  data.frame() %>%
+  rownames_to_column(var = "SampleID")
+
+kimbe_shannon_combined_df_W <- left_join(kimbe_shannon_df_W, kimbe_metadata_W, by = "SampleID") %>% 
+  mutate_if(is.character, as.factor)
+
+```
+
+```{r}
+# Combine sediment and water Chao1 into one dataframe
+kimbe_shannon_combined_df <- bind_rows(
+ kimbe_shannon_combined_df_S %>% select(SampleID, Shannon) %>% mutate(SampleType = "Sediment"),
+  kimbe_shannon_combined_df_W %>% select(SampleID, Shannon) %>% mutate(SampleType = "Water")
+)
+
+# Wilcoxon test
+wilcox.test(Shannon ~ SampleType, data = kimbe_shannon_combined_df)
+
+library(rstatix)
+wilcox_effsize(kimbe_shannon_combined_df, Shannon ~ SampleType)
+
+#Median Difference
+kimbe_shannon_median_diff <- with(kimbe_shannon_combined_df, 
+                    median(Shannon[SampleType == "Sediment"]) - 
+                    median(Shannon[SampleType == "Water"]))
+kimbe_shannon_median_diff
+
+```
+
+# Visualising Shannon in Boxplot format
+
+```{r}
+# Visualise Chao1 based on Location (Sediment)
+ggplot(kimbe_shannon_combined_df_S, aes(x = Location, y = Shannon)) +
+  geom_boxplot() +
+  geom_point(aes(col = Location), position = position_jitter(width = .1), alpha = .5)
+
+# Visualise Chao1 based on Location (Water)
+ggplot(kimbe_shannon_combined_df_W, aes(x = Location, y = Shannon)) +
+  geom_boxplot() +
+  geom_point(aes(col = Location), position = position_jitter(width = .1), alpha = .5)
+
+```
+
+# Visualise Chao1 in Histogram format and conduct Shapiro Tests
+
+```{r}
+### SEDIMENT ###
+hist(kimbe_shannon_combined_df_S$Shannon, breaks = 10, main = "Shannon Distribution")
+shapiro.test(kimbe_shannon_combined_df_S$Shannon)
+
+# Shapiro Test Results: W = 0.85306, p-value = 0.004798
+ 
+### WATER ###
+hist(kimbe_shannon_combined_df_W$Shannon, breaks = 10, main = "Shannon Distribution")
+shapiro.test(kimbe_shannon_combined_df_W$Shannon)
+
+# Shapiro Test Results: 0.96616, p-value = 0.4007
+```
+
+#############################
+###### SEDIMENT SAMPLES #####
+#############################
+
+# Model Fitting
+
+```{r}
+
+kimbe_model_shannon_gaussian1 <- glmmTMB(Shannon ~ Location + DepthCategory + (1 | SubjectID),
+                               data = kimbe_shannon_combined_df_S,
+                               family = gaussian,
+                                control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS")))
+
+kimbe_model_shannon_gaussian2 <- glmmTMB(Shannon ~ Location + DepthCategory,
+                               data = kimbe_shannon_combined_df_S,
+                               family = gaussian(link = "log")) # Best
+
+
+kimbe_model_shannon_gaussian4 <- glmmTMB(Shannon ~ Location + DepthCategory ,  
+                               data = kimbe_shannon_combined_df_S,
+                               family = gaussian)
+
+kimbe_model_shannon_lm <- lm(Shannon ~ Location + DepthCategory,
+  data = kimbe_shannon_combined_df_S
+)
+
+
+AIC(kimbe_model_shannon_lm,kimbe_model_shannon_gaussian4,kimbe_model_shannon_gaussian2)
+
+
+simulateResiduals(kimbe_model_shannon_gaussian2) %>% plot()
+simulateResiduals(kimbe_model_shannon_gaussian4) %>% plot()
+
+
+summary(kimbe_model_shannon_gaussian4)
+ggeffect(kimbe_model_shannon_gaussian4, ~Location|DepthCategory) %>% plot()
+```
+
+```{r}
+Sed.shannon_v1 <-emmeans(kimbe_model_shannon_gaussian4, ~Location|DepthCategory, regrid = "response") %>% 
+  as_tibble()  %>% filter(! (Location == "NM" & DepthCategory == "Shallow")) %>%
+  ggplot() +
+   geom_pointrange(aes(x = Location, y = emmean, ymin = lower.CL, ymax = upper.CL, col = DepthCategory), 
+                   position = position_dodge(width = .4)) +
+   geom_point(data = kimbe_shannon_combined_df_S, aes(y = Shannon, x = Location, col = DepthCategory), position = position_dodge(width = .4)) +
+   theme_classic() +
+   labs(y = "Shannon", x = "") +
+   theme(axis.line = element_blank(), 
+         panel.border = element_rect(fill = "transparent"), 
+         legend.position = c(.8,.9), legend.title = element_blank()) 
+
+save(kimbe_model_shannon_gaussian4, file = "kimbe_model_shannon_gaussian4.RData")
+save(kimbe_shannon_combined_df_S, file = "kimbe_shannon_combined_df_S.RData")
+
+```
+
+# Post Hoc
+
+```{r}
+library(emmeans)
+load("kimbe_model_shannon_gaussian4.RData")
+load("shannon_combined_df_S.RData")
+kimbe_em_Shannon_S <- emmeans(kimbe_model_shannon_gaussian4, pairwise ~  Location  , regrid = "response") 
+kimbe_em_Shannon_S %>% plot()
+kimbe_em_Shannon_S
+
+```
+
+#############################
+###### WATER SAMPLES ########
+#############################
+
+# Model Fitting
+
+```{r}
+
+kimbe_model_shannon_gaussian_water1 <- glmmTMB(Shannon ~ Location + DepthCategory + (1 | SubjectID), 
+                               data = kimbe_shannon_combined_df_W,
+                               family = gaussian(link = "log"))
+
+kimbe_model_shannon_gaussian_water2 <- glmmTMB(Shannon ~ Location + DepthCategory,
+                               data = kimbe_shannon_combined_df_W,
+                               family = gaussian) 
+
+kimbe_model_shannon_gaussian_water2 <- glmmTMB(Shannon ~ Location + DepthCategory,
+                               data = kimbe_shannon_combined_df_W,
+                               family = gaussian(link = "log")) 
+
+
+AIC(kimbe_model_shannon_gaussian_water1, kimbe_model_shannon_gaussian_water2, kimbe_model_shannon_gaussian_water3)
+
+simulateResiduals(kimbe_model_shannon_gaussian_water1) %>% plot()
+simulateResiduals(kimbe_model_shannon_gaussian_water2) %>% plot()
+simulateResiduals(kimbe_model_shannon_gaussian_water3) %>% plot()
+
+
+summary(kimbe_model_shannon_gaussian_water2)
+p1 <- ggeffect(model_shannon_gaussian_water, ~Location|DepthCategory) %>% plot(show_data = TRUE)
+p2 <- ggeffect(model_shannon_gaussian2_water, ~Location|DepthCategory) %>% plot(show_data = TRUE)
+
+library(ggpubr)
+ggarrange(p1, p2, labels = c("a.", "b."), share.legend = TRUE) 
+ggsave("chooseagoodname.png", width = 8, height = 4)
+
+save(kimbe_model_shannon_gaussian_water2, file = "kimbe_model_shannon_gaussian_water2.RData")
+save(kimbe_shannon_combined_df_W, file = "kimbe_shannon_combined_df_W.RData")
+
+```
+
+```{r}
+
+```
+
+
+# Post Hoc
+```{r}
+load("kimbe_model_shannon_gaussian_water2.RData")
+library(emmeans)
+kimbe_em_Shannon_W <- emmeans(kimbe_model_shannon_gaussian_water2, pairwise ~ DepthCategory , regrid = "response") 
+kimbe_em_Shannon_W %>% plot()
+kimbe_em_Shannon_W
+
+
+```
+
+
+```{r}
+# You'll want to use residual diagnostics from performance or DHARMa package
+library(DHARMa)
+
+# Simulate residuals
+sim_res_W <- simulateResiduals(fittedModel = model_shannon_gaussian2_water)
+
+# Basic diagnostics
+plot(sim_res_W)
+
+# Optional: test for outliers, dispersion, etc.
+testDispersion(sim_res_W)
+testOutliers(sim_res_W)
+
+
+```
+

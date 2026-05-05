@@ -1,0 +1,279 @@
+---
+title: "VDH_KimbeASVAnalysis_12/01/26"
+output: html_document
+date: "2026-01-12"
+---
+
+```{r}
+Final_path_ <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+```
+
+```{r}
+library(phyloseq)
+library(dplyr)
+
+# total unique ASVs
+total_asvs <- ntaxa(kimbe_phyloseq_rare)
+total_asvs
+
+```
+```{r}
+water_phy <- subset_samples(kimbe_phyloseq_rare, SampleType == "W")
+sed_phy   <- subset_samples(kimbe_phyloseq_rare, SampleType == "S")
+
+```
+
+```{r}
+# presence/absence tables
+water_asvs <- taxa_names(prune_taxa(taxa_sums(water_phy) > 0, water_phy))
+sed_asvs   <- taxa_names(prune_taxa(taxa_sums(sed_phy) > 0, sed_phy))
+
+# unique counts
+unique_water <- setdiff(water_asvs, sed_asvs)
+unique_sed   <- setdiff(sed_asvs, water_asvs)
+shared_asvs  <- intersect(water_asvs, sed_asvs)
+
+cat("Total ASVs:", total_asvs, "\n")
+cat("Water-only ASVs:", length(unique_water), "\n")
+cat("Sediment-only ASVs:", length(unique_sed), "\n")
+cat("Shared ASVs:", length(shared_asvs), "\n")
+
+```
+
+```{r}
+ka_phy <- subset_samples(kimbe_phyloseq_rare, Location == "KA")
+kd_phy <- subset_samples(kimbe_phyloseq_rare, Location == "KD")
+ke_phy <- subset_samples(kimbe_phyloseq_rare, Location == "KE")
+km_phy <- subset_samples(kimbe_phyloseq_rare, Location == "KM")
+
+
+ka_asvs <- taxa_names(prune_taxa(taxa_sums(ka_phy) > 0, ka_phy))
+kd_asvs <- taxa_names(prune_taxa(taxa_sums(kd_phy) > 0, kd_phy))
+ke_asvs <- taxa_names(prune_taxa(taxa_sums(ke_phy) > 0, ke_phy))
+km_asvs <- taxa_names(prune_taxa(taxa_sums(km_phy) > 0, km_phy))
+
+
+```
+
+```{r}
+shared_all   <- Reduce(intersect, list(ka_asvs, kd_asvs, ke_asvs, km_asvs))
+shared_ka_ke <- intersect(ka_asvs, ke_asvs)
+shared_ka_kd <- intersect(ka_asvs, kd_asvs)
+shared_ka_km <- intersect(ka_asvs, km_asvs)
+shared_kd_ke <- intersect(kd_asvs, ke_asvs)
+shared_kd_km <- intersect(kd_asvs, km_asvs)
+shared_ke_km <- intersect(ke_asvs, km_asvs)
+
+
+
+cat("Shared across all sites:", length(shared_all), "\n")
+cat("Shared KA–KE:", length(shared_ka_ke), "\n")
+cat("Shared KA–KD:", length(shared_ka_kd), "\n")
+cat("Shared KA–KM:", length(shared_ka_km), "\n")
+cat("Shared KD–KE:", length(shared_kd_ke), "\n")
+cat("Shared KD–KM:", length(shared_kd_km), "\n")
+cat("Shared KE–KM:", length(shared_ke_km), "\n")
+
+
+# ---- Step X: Unique ASVs per location ----
+
+unique_ka <- setdiff(ka_asvs, union(kd_asvs, ke_asvs, km_asvs))
+unique_kd <- setdiff(kd_asvs, union(ka_asvs, ke_asvs, km_asvs))
+unique_ke <- setdiff(ke_asvs, union(ka_asvs, kd_asvs, km_asvs))
+unique_km <- setdiff(km_asvs, union(ka_asvs, kd_asvs, ke_asvs))
+
+cat("Unique ASVs in NM only:", length(unique_nm), "\n")
+cat("Unique ASVs in NN only:", length(unique_nn), "\n")
+cat("Unique ASVs in NV only:", length(unique_nv), "\n\n")
+
+```
+
+```{r}
+# Lists of ASVs by site
+asv_sets <- list(NM = nm_asvs, NN = nn_asvs, NV = nv_asvs)
+
+# Shared by all three
+shared_all <- Reduce(intersect, asv_sets)
+
+# Shared by exactly two (exclude triple-shared)
+shared_nm_nn <- setdiff(intersect(nm_asvs, nn_asvs), shared_all)
+shared_nm_nv <- setdiff(intersect(nm_asvs, nv_asvs), shared_all)
+shared_nn_nv <- setdiff(intersect(nn_asvs, nv_asvs), shared_all)
+
+# Unique to each site (exclude any shared ASVs)
+unique_nm <- setdiff(nm_asvs, union(nn_asvs, nv_asvs))
+unique_nn <- setdiff(nn_asvs, union(nm_asvs, nv_asvs))
+unique_nv <- setdiff(nv_asvs, union(nm_asvs, nn_asvs))
+
+# Combine into summary table
+exclusive_summary <- data.frame(
+  Category = c("Unique to NM",
+               "Unique to NN",
+               "Unique to NV",
+               "Shared NM–NN only",
+               "Shared NM–NV only",
+               "Shared NN–NV only",
+               "Shared all three"),
+  Count = c(length(unique_nm),
+            length(unique_nn),
+            length(unique_nv),
+            length(shared_nm_nn),
+            length(shared_nm_nv),
+            length(shared_nn_nv),
+            length(shared_all))
+)
+
+print(exclusive_summary)
+```
+
+### EXCLUDING SHARED ASVs BETWEEN WATER AND SEDIMENT ###
+
+```{r}
+# Exclude ASVs present in both habitats
+water_only_asvs <- setdiff(taxa_names(water_phy), shared_asvs)
+sed_only_asvs   <- setdiff(taxa_names(sed_phy), shared_asvs)
+
+# Subset phyloseq objects to only these ASVs
+water_phy_unique <- prune_taxa(water_only_asvs, water_phy)
+sed_phy_unique   <- prune_taxa(sed_only_asvs, sed_phy)
+
+```
+
+###WATER PER LOCATION###
+
+```{r}
+# Subset water samples by location
+ka_w_phy <- subset_samples(water_phy_unique, Location == "KA")
+kd_w_phy <- subset_samples(water_phy_unique, Location == "KD")
+ke_w_phy <- subset_samples(water_phy_unique, Location == "KE")
+km_w_phy <- subset_samples(water_phy_unique, Location == "KM")
+
+
+# Extract ASV names present in each
+ka_w_asvs <- taxa_names(prune_taxa(taxa_sums(ka_w_phy) > 0, ka_w_phy))
+kd_w_asvs <- taxa_names(prune_taxa(taxa_sums(kd_w_phy) > 0, kd_w_phy))
+ke_w_asvs <- taxa_names(prune_taxa(taxa_sums(ke_w_phy) > 0, ke_w_phy))
+km_w_asvs <- taxa_names(prune_taxa(taxa_sums(km_w_phy) > 0, km_w_phy))
+
+
+```
+
+```{r}
+# Shared across all three water locations
+shared_w_all <- Reduce(intersect, list(ka_w_asvs, kd_w_asvs, ke_w_asvs, km_w_asvs))
+
+# Shared between exactly two locations (exclude ASVs in all three)
+shared_w_ka_kd <- setdiff(intersect(ka_w_asvs, kd_w_asvs), shared_w_all)
+shared_w_ka_ke <- setdiff(intersect(ka_w_asvs, ke_w_asvs), shared_w_all)
+shared_w_ka_km <- setdiff(intersect(ka_w_asvs, km_w_asvs), shared_w_all)
+shared_w_kd_ke <- setdiff(intersect(kd_w_asvs, ke_w_asvs), shared_w_all)
+shared_w_kd_km <- setdiff(intersect(kd_w_asvs, km_w_asvs), shared_w_all)
+shared_w_ke_km <- setdiff(intersect(ke_w_asvs, km_w_asvs), shared_w_all)
+
+
+# Unique to each water location (not in the other two)
+unique_w_ka <- setdiff(ka_w_asvs, union(kd_w_asvs, union(ke_w_asvs, km_w_asvs)))
+unique_w_kd <- setdiff(kd_w_asvs, union(ka_w_asvs, union(ke_w_asvs, km_w_asvs)))
+unique_w_ke <- setdiff(ke_w_asvs, union(kd_w_asvs, union(ka_w_asvs, km_w_asvs)))
+unique_w_km <- setdiff(km_w_asvs, union(kd_w_asvs, union(ke_w_asvs, ka_w_asvs)))
+```
+
+```{r}
+water_summary <- data.frame(
+  Category = c("Unique to KA_W",
+               "Unique to KD_W",
+               "Unique to KE_W",
+               "Unique to KM_W",
+               "Shared KA–KD only",
+               "Shared KA–KE only",
+               "Shared KA–KM only",
+               "Shared KD–KE only",
+               "Shared KD–KM only",
+               "Shared KE–KM only",
+               "Shared all four water sites"),
+  Count = c(length(unique_w_ka),
+            length(unique_w_kd),
+            length(unique_w_ke),
+            length(unique_w_km),
+            length(shared_w_ka_kd),
+            length(shared_w_ka_ke),
+            length(shared_w_ka_km),
+            length(shared_w_kd_ke),
+            length(shared_w_kd_km),
+            length(shared_w_ke_km),
+            length(shared_w_all))
+)
+
+o1
+```
+
+
+
+
+###SEDIMENT PER LOCATION###
+
+```{r}
+# Subset sediment samples by location
+ka_s_phy <- subset_samples(sed_phy_unique, Location == "KA")
+kd_s_phy <- subset_samples(sed_phy_unique, Location == "KD")
+ke_s_phy <- subset_samples(sed_phy_unique, Location == "KE")
+km_s_phy <- subset_samples(sed_phy_unique, Location == "KM")
+
+
+# Extract ASV names present in each
+ka_s_asvs <- taxa_names(prune_taxa(taxa_sums(ka_s_phy) > 0, ka_s_phy))
+kd_s_asvs <- taxa_names(prune_taxa(taxa_sums(kd_s_phy) > 0, kd_s_phy))
+ke_s_asvs <- taxa_names(prune_taxa(taxa_sums(ke_s_phy) > 0, ke_s_phy))
+km_s_asvs <- taxa_names(prune_taxa(taxa_sums(km_s_phy) > 0, km_s_phy))
+```
+
+```{r}
+# Shared across all four sediment locations
+shared_s_all <- Reduce(intersect, list(ka_s_asvs, kd_s_asvs, ke_s_asvs, km_s_asvs))
+
+# Shared between exactly two locations (exclude ASVs in all three)
+shared_s_ka_kd <- setdiff(intersect(ka_s_asvs, kd_s_asvs), shared_s_all)
+shared_s_ka_ke <- setdiff(intersect(ka_s_asvs, ke_s_asvs), shared_s_all)
+shared_s_ka_km <- setdiff(intersect(ka_s_asvs, km_s_asvs), shared_s_all)
+shared_s_kd_ke <- setdiff(intersect(kd_s_asvs, ke_s_asvs), shared_s_all)
+shared_s_kd_km <- setdiff(intersect(kd_s_asvs, km_s_asvs), shared_s_all)
+shared_s_ke_km <- setdiff(intersect(ke_s_asvs, km_s_asvs), shared_s_all)
+
+
+# Unique to each sediment location (not in the other two)
+unique_s_ka <- setdiff(ka_s_asvs, union(kd_s_asvs, union(ke_s_asvs, km_s_asvs)))
+unique_s_kd <- setdiff(kd_s_asvs, union(ka_s_asvs, union(ke_s_asvs, km_s_asvs)))
+unique_s_ke <- setdiff(ke_s_asvs, union(kd_s_asvs, union(ka_s_asvs, km_s_asvs)))
+unique_s_km <- setdiff(km_s_asvs, union(kd_s_asvs, union(ke_s_asvs, ka_s_asvs)))
+
+```
+
+```{r}
+sediment_summary <- data.frame(
+  Category = c("Unique to KA_S",
+               "Unique to KD_S",
+               "Unique to KE_S",
+               "Unique to KM_S",
+               "Shared KA–KD only",
+               "Shared KA–KE only",
+               "Shared KA–KM only",
+               "Shared KD–KE only",
+               "Shared KD–KM only",
+               "Shared KE–KM only",
+               "Shared all four sediment sites"),
+  Count = c(length(unique_s_ka),
+            length(unique_s_kd),
+            length(unique_s_ke),
+            length(unique_s_km),
+            length(shared_s_ka_kd),
+            length(shared_s_ka_ke),
+            length(shared_s_ka_km),
+            length(shared_s_kd_ke),
+            length(shared_s_kd_km),
+            length(shared_s_ke_km),
+            length(shared_s_all))
+)
+
+```
+

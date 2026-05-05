@@ -1,0 +1,217 @@
+---
+title: "VDH_KimbePhyseqGLMChao1_Version2.3.2"
+output: html_document
+date: "2025-10-16"
+---
+
+```{r}
+# Install BiocManager if not already installed
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# List of required packages
+packages <- c("phyloseq", "tidyverse", "vegan", "glmmTMB", "emmeans", "ggplot2")
+library(phyloseq)
+library(tidyverse)
+library(vegan)
+library(glmmTMB)
+library(emmeans)
+library(ggplot2)
+
+
+# Install packages using BiocManager
+BiocManager::install(packages, ask = FALSE, update = TRUE)
+```
+
+```{r}
+Final_path_ <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+```
+
+# Subset for Water and Sediment
+```{r}
+# Separate by Sample Type
+kimbe_sample_data_df <- data.frame(sample_data(kimbe_phyloseq_rare))
+
+kimbe_sediment_samples <- rownames(kimbe_sample_data_df[kimbe_sample_data_df$SampleType == "S", ])
+kimbe_ps_sediment <- prune_samples(kimbe_sediment_samples, kimbe_phyloseq_rare)
+kimbe_ps_sediment <- subset_samples(kimbe_ps_sediment, sample_names(kimbe_ps_sediment) != "KA01S_filtered.fastq.gz")
+
+kimbe_water_samples <- rownames(kimbe_sample_data_df[kimbe_sample_data_df$SampleType == "W", ])
+kimbe_ps_water <- prune_samples(kimbe_water_samples, kimbe_phyloseq_rare)
+
+```
+
+
+# Calculate Chao1 values for Water and Sediment and merge with Metadata
+
+```{r}
+# Estimate richness (Chao1) for Sediment
+kimbe_chao1_df_S <- estimate_richness(kimbe_ps_sediment, measures = "Chao1") %>%
+  rownames_to_column(var = "SampleID")
+
+# Merge with metadata
+kimbe_metadata_S <- sample_data(kimbe_ps_sediment) %>%
+  data.frame() %>%
+  rownames_to_column(var = "SampleID")
+
+kimbe_combined_df_S <- left_join(kimbe_chao1_df_S, kimbe_metadata_S, by = "SampleID") %>% 
+  mutate_if(is.character, as.factor)
+```
+
+```{r}
+# Estimate richness (Chao1) for Water
+kimbe_chao1_df_W <- estimate_richness(kimbe_ps_water, measures = "Chao1") %>%
+  rownames_to_column(var = "SampleID")
+
+# Merge with metadata
+kimbe_metadata_W <- sample_data(kimbe_ps_water) %>%
+  data.frame() %>%
+  rownames_to_column(var = "SampleID")
+
+kimbe_combined_df_W <- left_join(kimbe_chao1_df_W, kimbe_metadata_W, by = "SampleID") %>% 
+  mutate_if(is.character, as.factor)
+```
+
+# Water vs Sediment Chao 1 Stat
+
+```{r}
+# Combine sediment and water Chao1 into one dataframe
+kimbe_combined_df <- bind_rows(
+  kimbe_combined_df_S %>% select(SampleID, Chao1) %>% mutate(SampleType = "Sediment"),
+  kimbe_combined_df_W %>% select(SampleID, Chao1) %>% mutate(SampleType = "Water")
+)
+
+# Wilcoxon test
+wilcox.test(Chao1 ~ SampleType, data = kimbe_combined_df)
+
+# Effect size
+install.packages("coin")
+library(rstatix)
+wilcox_effsize(kimbe_combined_df, Chao1 ~ SampleType)
+
+#Median Difference
+median_diff <- with(kimbe_combined_df, 
+                    median(Chao1[SampleType == "Sediment"]) - 
+                    median(Chao1[SampleType == "Water"]))
+median_diff
+
+
+```
+# Visualising Chao1 in Boxplot format
+
+```{r}
+# Visualise Chao1 based on Location (Sediment)
+ggplot(kimbe_combined_df_S, aes(x = Location, y = Chao1)) +
+  geom_boxplot() +
+  geom_point(aes(col = DepthCategory), position = position_jitter(width = .1), alpha = .5)
+
+# Visualise Chao1 based on Location (Water)
+ggplot(kimbe_combined_df_W, aes(x = Location, y = Chao1)) +
+  geom_boxplot() +
+  geom_point(aes(col = DepthCategory), position = position_jitter(width = .1), alpha = .5)
+
+```
+
+#############################
+###### SEDIMENT SAMPLES #####
+#############################
+
+# Poisson GLMM for Sediment Samples
+```{r}
+library(ggeffects)
+library(DHARMa)
+library(glmmTMB)
+
+kimbe_model_poisson_S_Depth2 <- glmmTMB(round(Chao1) ~ Location + DepthCategory + (1 | SubjectID),
+                       data = kimbe_combined_df_S,
+                       family = poisson(link = "log")) # Best Fit based off AIC scores
+
+kimbe_model_poisson_S_Depth3 <- glmmTMB(round(Chao1) ~ Location + DepthCategory + (1 | DepthCategory/SubjectID),
+                       data = kimbe_combined_df_S,
+                       family = poisson(link = "log"))  # 
+
+kimbe_model_poisson_S_Depth4 <- glmmTMB(round(Chao1) ~ Location + (1 | DepthCategory/SubjectID),
+                       data = kimbe_combined_df_S,
+                       family = poisson(link = "log"),
+                       control = glmmTMBControl(optimizer = optim, optArgs = list(method="BFGS"))) 
+
+AIC(kimbe_model_poisson_S_Depth2, kimbe_model_poisson_S_Depth3, kimbe_model_poisson_S_Depth4)
+
+simulateResiduals(kimbe_model_poisson_S_Depth4) %>% plot() 
+
+ggeffect(kimbe_model_poisson_S_Depth2, ~Location|DepthCategory) %>% plot()
+
+
+
+ggpredict(kimbe_model_poisson_S_Depth2) %>% plot()
+
+save(kimbe_model_poisson_S_Depth2, file = "kimbe_model_poisson_S_Depth2.RData")
+save(kimbe_combined_df_S, file = "kimbe_combined_df_S.RData")
+```
+
+
+```{r}
+Kimbe.Sed.chao_v1 <-emmeans(kimbe_model_poisson_S_Depth2, ~Location|DepthCategory, regrid = "response") %>% 
+  as_tibble() %>% 
+  filter(! (Location == "NM" & DepthCategory == "Shallow")) %>% 
+  ggplot() +
+   geom_pointrange(aes(x = Location, y = response, ymin = asymp.LCL, ymax = asymp.UCL, col = DepthCategory), 
+                   position = position_dodge(width = .4)) +
+   geom_point(data = kimbe_combined_df_S, aes(y = Chao1, x = Location, col = DepthCategory), position = position_dodge(width = .4)) +
+   theme_classic() +
+   labs(y = "Chao1", x = "") +
+   theme(axis.line = element_blank(), 
+         panel.border = element_rect(fill = "transparent"), 
+         legend.position = c(.8,.8), legend.title = element_blank()) 
+```
+
+# Post Hoc 
+```{r}
+library(emmeans)
+kimbe_em_S <- emmeans(kimbe_model_poisson_S_Depth2, pairwise ~ Location , regrid = "response") 
+kimbe_em_S %>% plot()
+kimbe_em_S
+```
+
+#############################
+###### WATER SAMPLES ########
+#############################
+
+# Poisson GLMM for Water Samples
+```{r}
+
+kimbe_model_poisson_W_Depth2 <- glmmTMB(round(Chao1) ~ Location + DepthCategory + (1 | SubjectID),
+                       data = kimbe_combined_df_W,
+                       family = poisson(link = "log")) # Best model, includes depth category as both a fixed and random effect
+
+kimbe_model_poisson_W_Depth3 <- glmmTMB(round(Chao1) ~ Location + DepthCategory + (1 | DepthCategory/SubjectID),
+                       data = kimbe_combined_df_W,
+                       family = poisson(link = "log")) 
+
+kimbe_model_poisson_W_Depth4 <- glmmTMB(round(Chao1) ~ Location  + (1 | DepthCategory/SubjectID),
+                       data = kimbe_combined_df_W,
+                       family = poisson(link = "log")) 
+
+AIC(kimbe_model_poisson_W_Depth2, kimbe_model_poisson_W_Depth3, kimbe_model_poisson_W_Depth4)
+
+simulateResiduals(kimbe_model_poisson_W_Depth4) %>% plot()
+
+ggeffect(kimbe_model_poisson_W_Depth2, ~ Location | DepthCategory) %>% plot()
+ggpredict(kimbe_model_poisson_W_Depth2) %>% plot()
+summary(kimbe_model_poisson_W_Depth2)
+
+save(kimbe_model_poisson_W_Depth2, file = "kimbe_model_poisson_W_Depth2.RData")
+save(kimbe_combined_df_W, file = "kimbe_combined_df_W.RData")
+
+```
+
+# Post Hoc 
+```{r}
+library(emmeans)
+kimbe_em_W <- emmeans(kimbe_model_poisson_W_Depth2, pairwise ~ DepthCategory, regrid = "response") 
+kimbe_em_W
+kimbe_em_W %>% plot()
+
+
+```

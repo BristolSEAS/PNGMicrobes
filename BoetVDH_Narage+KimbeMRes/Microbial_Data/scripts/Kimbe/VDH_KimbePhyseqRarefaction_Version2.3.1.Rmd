@@ -1,0 +1,158 @@
+---
+title: "VDH_KimbePhyseqRarefaction_Version2.3.1"
+output: html_document
+date: "2025-05-08"
+---
+###################################################################################
+########################## NARAGE PHYSEQ RAREFACTION ##############################
+###################################################################################
+
+```{r}
+# Summon filtered physeq object 
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq <- readRDS(file.path(Final_path, "kimbe_phyloseq.rds"))
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+# Load function to draw rarefaction curves: https://github.com/joey711/phyloseq/issues/143
+set.seed(1)
+calculate_rarefaction_curves <- function(psdata, measures, depths) {
+  require('plyr') # ldply
+  require('reshape2') # melt
+  
+  estimate_rarified_richness <- function(psdata, measures, depth) {
+    if(max(sample_sums(psdata)) < depth) return()
+    psdata <- prune_samples(sample_sums(psdata) >= depth, psdata)
+    
+    rarified_psdata <- rarefy_even_depth(psdata, depth, verbose = FALSE)
+    
+    alpha_diversity <- estimate_richness(rarified_psdata, measures = measures)
+    
+    # as.matrix forces the use of melt.array, which includes the Sample names (rownames)
+    molten_alpha_diversity <- melt(as.matrix(alpha_diversity), varnames = c('Sample', 'Measure'), value.name = 'Alpha_diversity')
+    
+    molten_alpha_diversity
+  }
+  
+  names(depths) <- depths # this enables automatic addition of the Depth to the output by ldply
+  rarefaction_curve_data <- ldply(depths, estimate_rarified_richness, psdata = psdata, measures = measures, .id = 'Depth', .progress = ifelse(interactive(), 'text', 'none'))
+   
+   # convert Depth from factor to numeric
+  rarefaction_curve_data$Depth <- as.numeric(levels(rarefaction_curve_data$Depth))[rarefaction_curve_data$Depth]
+  
+  rarefaction_curve_data
+}
+```
+
+###################################################################################
+########################## CHECK SEQUENCING DEPTH #################################
+###################################################################################
+
+```{r}
+# Stats about the "cleaned" phyloseq object
+kimbe_phyloseq
+
+# Statistics for the dataset:
+summary(sample_sums(kimbe_phyloseq))
+
+phy.cleanmelt_kimbe <- psmelt(kimbe_phyloseq) %>% 
+  filter(SampleType == "W") %>% droplevels()
+
+Gert.kimbe <- phy.cleanmelt_kimbe %>% mutate(Class = as.factor(Class)) %>%  
+  dplyr::group_by(Class) %>% 
+  dplyr::summarise(n = sum(Abundance)) %>% 
+  filter(n > 0  ) %>% pull(Class)
+
+#summarise = dplyr::summarise
+
+ggplot(phy.cleanmelt_kimbe %>% filter(Class %in% Gert.kimbe), aes(x = SubjectID, y = Abundance, fill = Class)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Location) +
+  theme(axis.text.x = element_blank(), legend.position = "right", legend.key.size = unit(2, "mm")) 
+
+# Make a bar plot of number of reads per sample to visualise sequencing depth
+phy.cleanmelt <- psmelt(kimbe_phyloseq) 
+ggplot(phy.cleanmelt, aes(x = SampleType, y = Abundance, fill = Class)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+library(plyr)
+library(dplyr)
+Kimbe_rarefaction_curve_data <- calculate_rarefaction_curves(kimbe_phyloseq, c("Observed", "Shannon"),
+                                                       rep(c(1:100 * 10, 1:100 * 1000), each = 100))
+save(Kimbe_rarefaction_curve_data, file = "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2/Kimbe_rarefaction_curve_data.RData")
+```
+
+```{r}
+
+load("/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2/Kimbe_rarefaction_curve_data.RData")
+summary(Kimbe_rarefaction_curve_data)
+
+# Summarise alpha diversity: 
+ Kimbe_rarefaction_curve_data_summary <- ddply(Kimbe_rarefaction_curve_data, c('Depth', 'Sample', 'Measure'),
+                                        summarise, Alpha_diversity_mean = mean(Alpha_diversity),
+                                        Alpha_diversity_sd = sd(Alpha_diversity)) 
+
+# Rename the depth column in your sample data to avoid confusion
+sample_data_temp <- data.frame(sample_data(kimbe_phyloseq))
+berb<- data.frame(sample_data(narage_phyloseq))
+colnames(sample_data_temp)[colnames(sample_data_temp) == "Depth"] <- "DepthCategory"
+sample_data(kimbe_phyloseq) <- sample_data_temp
+
+# Add sample data
+Kimbe_rarefaction_curve_data_summary_verbose <- merge(Kimbe_rarefaction_curve_data_summary,
+                                                data.frame(sample_data(kimbe_phyloseq)),
+                                                by.x = 'Sample', by.y = 'row.names')
+```
+
+
+```{r}
+
+Kimbe_rarefaction.plot <- ggplot(
+  data = Kimbe_rarefaction_curve_data_summary_verbose,
+  mapping = aes(
+    x = Depth,
+    y = Alpha_diversity_mean, 
+    ymin = Alpha_diversity_mean - Alpha_diversity_sd,
+    ymax = Alpha_diversity_mean + Alpha_diversity_sd,
+    colour = Location,
+    group = Sample)) +
+  geom_line() + 
+  facet_wrap(facets = ~ Measure, scales = 'free_y')
+Kimbe_rarefaction.plot
+
+
+```
+
+```{r}
+sort(sample_sums(kimbe_phyloseq))[1:55] # Minimum = 11,272 reads, but next highest is 20,115
+library(phyloseq)
+summary(sample_sums(kimbe_phyloseq))
+
+
+ggplot(phy.cleanmelt, aes(x = Sample, y = Abundance, fill = Location )) +
+  geom_bar(stat = "identity") + 
+  geom_hline(aes(yintercept = min(sample_sums(kimbe_phyloseq)))) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# We could rarefy the whole dataset to 18,000 reads. This would not discard any samples
+
+set.seed(1)
+rare_depth <- 20000
+kimbe_phyloseq_rare = rarefy_even_depth(kimbe_phyloseq, sample.size = rare_depth, replace=FALSE)
+
+45927 - 28092 #(rarefy to 20000) #17835 are removed
+# ASVs were removed because they are no longer present in any sample after random subsampling
+
+kimbe_phyloseq # 45,927 by 55 Samples, KE31S removed due to too few reads
+kimbe_phyloseq_rare # 28,092 taxa and 54 samples
+tax_table(kimbe_phyloseq_rare)
+saveRDS(kimbe_phyloseq_rare, file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+rm(phy.clean.melt, rarefaction_curve_data_summary, rarefaction_curve_data_summary_verbose, rarefaction_curve_data)
+```
+
+

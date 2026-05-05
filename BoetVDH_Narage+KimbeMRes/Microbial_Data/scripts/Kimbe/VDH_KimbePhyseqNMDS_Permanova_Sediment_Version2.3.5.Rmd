@@ -1,0 +1,179 @@
+---
+title: "VDH_KimbePhyseqNMDS_Permanova_Sediment_Version2.3.5"
+output: html_document
+date: "2025-10-24"
+---
+```{r}
+ 
+library(phyloseq)
+library(vegan)
+library(ggplot2)
+library(dplyr)
+library(ggforce)
+```
+
+```{r}
+# Summon filtered physeq object 
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+
+# Filter for sediment samples and transform data
+kimbe_sediment <- subset_samples(kimbe_phyloseq_rare, SampleType == "S")
+kimbe_sediment <- subset_samples(kimbe_sediment, sample_names(kimbe_sediment) != "KD17S_filtered.fastq.gz")
+
+# Tax glom at Family level and prune rare taxa
+kimbe_sediment_glom <- tax_glom(kimbe_sediment, taxrank = "Family", bad_empty = c(NA), NArm = TRUE)  
+
+
+
+# Perform NMDS
+nmds_kimbe_sediment <- ordinate(kimbe_sediment_glom, method = "NMDS", distance = "bray")
+
+# Check NMDS stress
+nmds_kimbe_sediment$stress  # Should ideally be < 0.2
+
+# Create plotting dataframe
+kimbe_nmds_df_sediment <- data.frame(
+  NMDS1 = nmds_kimbe_sediment$points[,1],
+  NMDS2 = nmds_kimbe_sediment$points[,2],
+  Location = sample_data(kimbe_sediment_glom)$Location, 
+  Depth = sample_data(kimbe_sediment_glom)$Depth
+)
+
+my_font <- "Verdana"
+location_labels <- c("KA" = "Lagoon A", "KD" = "Lagoon D", "KE" = "Lagoon E", "KM" = "Control")
+# Create enhanced NMDS plot
+kimbe_nmds_plot_sediment <- ggplot(kimbe_nmds_df_sediment, aes(x = NMDS1, y = NMDS2, color = Location, shape = Depth)) +
+  geom_point(size = 2.5)  +
+   ggforce::geom_mark_ellipse(aes(fill = Location), expand = 0, alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  scale_color_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  scale_fill_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  theme_classic() +
+  theme(
+    text = element_text(family = my_font),
+    axis.text = element_text(family = my_font, size = 8, face = "bold"),
+    plot.title = element_text(family = my_font, size = 11, face = "bold", hjust = 0.5),
+    axis.line = element_blank(),
+    panel.border = element_rect(linewidth = 1, fill = "transparent"),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  labs(
+    title = "",
+    x = "NMDS1",
+    y = "NMDS2"
+  )
+# Display and save the plot
+print(kimbe_nmds_plot_sediment)
+
+ggsave( "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/figures/Kimbe/kimbe_nmds_plot_water.png", plot = kimbe_nmds_plot_sediment, width = 8, height = 5  , dpi = 300)
+save(kimbe_nmds_df_sediment, file = "kimbe_nmds_df_sediment.RData")
+```
+
+```{r}
+which_outlier <- kimbe_nmds_df_sediment[which.max(abs(kimbe_nmds_df_sediment$NMDS1) + abs(kimbe_nmds_df_sediment$NMDS2)), ]
+print(which_outlier)
+library(phyloseq)
+ KD17S <- plot_bar(prune_samples(rownames(which_outlier), kimbe_sediment), fill = "Class") +
+  ggtitle("Taxonomic Composition of Outlier Sample") +
+   coord_flip() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 6),
+    legend.key.size = unit(0.3, "cm"),
+    legend.spacing.y = unit(0.2, "cm")
+  )
+```
+
+```{r}
+# Extract metadata
+kimbe_metadata <- data.frame(sample_data(kimbe_sediment))
+
+# Add sample names to metadata for easy filtering
+kimbe_metadata$SampleName <- rownames(kimbe_metadata)
+
+# Ensure the outlier_id is correct
+outlier_id <- rownames(which_outlier)
+
+# Select one normal sample from Location == "NN", excluding the outlier
+normal_id <- kimbe_metadata %>%
+  dplyr::filter(Location == "KD" & !(SampleName %in% outlier_id)) %>%
+  dplyr::pull(SampleName) %>%
+  .[1]  # Take the first one
+
+# Now prune both samples using correct sample names
+outlier_physeq <- prune_samples(outlier_id, kimbe_sediment)
+normal_physeq  <- prune_samples(normal_id, kimbe_sediment)
+
+# Merge and plot
+both_samples <- merge_phyloseq(outlier_physeq, normal_physeq)
+
+outlier<-plot_bar(both_samples, fill = "Class") +
+  facet_wrap(~Sample, ncol = 2) +
+  ggtitle("Taxonomic Composition: Outlier vs Normal Sample (KD)") +
+  scale_fill_viridis_d(option = "D") +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 8),
+    legend.text = element_text(size = 6),
+    legend.key.size = unit(0.3, "cm"),
+    legend.spacing.y = unit(0.2, "cm"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 6),
+    strip.text = element_text(face = "bold")
+  )
+```
+
+
+```{r}
+library(vegan)
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+library(pairwiseAdonis)
+
+# Calculate Bray-Curtis distances
+kimbe_bray_sediment <- phyloseq::distance(kimbe_sediment_glom, method = "bray")
+
+# Extract sample data
+kimbe_metadata_sediment <- data.frame(sample_data(kimbe_sediment_glom))
+
+# PERMANOVA
+kimbe_adonis2_result_sediment <- adonis2(kimbe_bray_sediment ~ Location * DepthCategory, data = kimbe_metadata_sediment, permutations = 999)
+
+print(kimbe_adonis2_result_water)
+```
+
+```{r}
+library(pairwiseAdonis)
+
+# Run pairwise PERMANOVA for Location
+pairwise.adonis2(
+  kimbe_bray_sediment ~ Location,
+  data = kimbe_metadata_sediment,
+  permutations = 999,
+  p.adjust.m = "bonferroni"  # adjust p-values for multiple testing
+)
+
+e# OR run pairwise PERMANOVA for DepthCategory
+pairwise.adonis2(
+  kimbe_bray_sediment ~ DepthCategory,
+  data = kimbe_metadata_sediment,
+  permutations = 999,
+  p.adjust.m = "bonferroni"
+)
+
+# OR for Location × DepthCategory interaction
+kimbe_metadata_sediment$Group <- interaction(kimbe_metadata_sediment$Location, kimbe_metadata_sediment$DepthCategory)
+
+pairwise.adonis2(
+  kimbe_bray_sediment ~ Group,
+  data = kimbe_metadata_sediment,
+  permutations = 999,
+  p.adjust.m = "bonferroni"
+)
+
+```

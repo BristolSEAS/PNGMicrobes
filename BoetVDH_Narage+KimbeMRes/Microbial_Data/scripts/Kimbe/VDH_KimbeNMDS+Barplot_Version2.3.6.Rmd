@@ -1,0 +1,239 @@
+---
+title: "VDH_KimbeNMDS+Barplot_Version2.3.6"
+output: html_document
+date: "2025-10-24"
+---
+
+```{r}
+library(phyloseq)  # For working with phyloseq objects
+library(vegan)     # For NMDS and distance matrix calculations
+library(ggplot2)
+library(viridis)   # For the viridis color scale
+library(dplyr)
+library(ggpubr)
+library(RColorBrewer)
+library(ggh4x)
+library(ggforce)
+
+```
+
+#Water
+##NMDS
+```{r}
+load("/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/scripts/Kimbe/kimbe_nmds_df_water.RData")
+
+my_font <- "Verdana"
+location_labels <- c("KA" = "Lagoon A", "KD" = "Lagoon D", "KE" = "Lagoon E", "KM" = "Control")
+# Create enhanced NMDS plot
+kimbe_nmds_plot_water <- ggplot(kimbe_nmds_df_water, aes(x = NMDS1, y = NMDS2, color = Location, shape = Depth)) +
+  geom_point(size = 2.5)  +
+   ggforce::geom_mark_ellipse(aes(fill = Location), expand = 0, alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  scale_color_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  scale_fill_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  theme_classic() +
+  theme(
+    text = element_text(family = my_font),
+    axis.text = element_text(family = my_font, size = 8, face = "bold"),
+    plot.title = element_text(family = my_font, size = 11, face = "bold", hjust = 0.5),
+    axis.line = element_blank(),
+    panel.border = element_rect(linewidth = 1, fill = "transparent"),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  labs(
+    title = "Water",
+    x = "NMDS1",
+    y = "NMDS2"
+  )
+# Display and save the plot
+print(nmds_plot_water)
+
+```
+
+
+##Barplots
+```{r}
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+
+# Filter your phyloseq object (assuming it's called ps)
+ps_water <- subset_samples(kimbe_phyloseq_rare, SampleType == "W")
+
+# Agglomerate at the Family level
+ps_family <- tax_glom(ps_water, taxrank = "Family")
+
+# Transform to relative abundance
+ps_rel <- transform_sample_counts(ps_family, function(x) x / sum(x))
+
+```
+
+```{r}
+top_order <- ps_rel %>% psmelt() %>% group_by(Order) %>% 
+  summarise(Abund = sum(Abundance)) %>% 
+  arrange(-Abund) %>% 
+  top_n(9) %>% 
+  pull(Order)
+
+
+order_colors <- c(
+  "Synechococcales" = "#e1574b",     # dominant red
+  "Flavobacteriales" = "#f28e2b", 
+  "Puniceispirillales" = "#4e79a7",# orange
+  "Pelagibacterales" = "#edc948",     # yellow
+  "Pseudomonadales" = "#59a14f",
+ "Rhodobacterales" = "#76b7b2",
+ "Kiloniellales" = "#f6c7b6",
+  "Incertae Sedis" = "#b07aa1",
+  "Bdellovibrionales" = "#9c755f",# purple
+  "Other"  = "#bab0ac"      # grey
+)
+
+Kimbe_Water_Barplot <- ps_rel %>% psmelt() %>% 
+  mutate(group = Order, 
+         group = ifelse(group %in% top_order, group, "Other")) %>% 
+  group_by(Location, Sample, group) %>% 
+  summarise(Abundance = sum(Abundance, na.rm = T)) %>% 
+  mutate(group = factor(group, levels = c("Other", rev(top_order))), Location = factor(Location,
+                           levels = c("KA", "KD", "KE", "KM"),
+                           labels = c("Lagoon A", "Lagoon D", "Lagoon E", "Control"))) %>% 
+  ggplot(aes(x = Sample, y = Abundance, fill = group)) +
+  geom_bar(stat = "identity") +
+  facet_grid2(. ~ Location, scales = "free_x", space = "free_x", 
+              switch = NULL) +
+  theme_pubclean() +
+  scale_fill_manual(values = order_colors) +
+  labs(x = NULL, y = "Relative Abundance", fill = "Order") +
+  theme(axis.text.x = element_blank(),
+        text = element_text(family = my_font, size = 8),
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "right",
+        strip.background = element_rect(, fill = "#DCDCDC", colour = "#000"), 
+    strip.text = element_text(size = 12, face = "bold")) 
+    
+  
+
+```
+
+
+#Sediment
+##NMDS
+```{r}
+load("/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/scripts/Kimbe/kimbe_nmds_df_sediment.RData")
+my_font <- "Verdana"
+location_labels <- c("KA" = "Lagoon A", "KD" = "Lagoon D", "KE" = "Lagoon E", "KM" = "Control")
+# Create enhanced NMDS plot
+kimbe_nmds_plot_sediment <- ggplot(kimbe_nmds_df_sediment, aes(x = NMDS1, y = NMDS2, color = Location, shape = Depth)) +
+  geom_point(size = 2.5) +
+  ggforce::geom_mark_ellipse(aes(fill = Location), expand = 0, alpha = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  scale_color_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  scale_fill_viridis_d(name = "Location", 
+                       labels = location_labels) +
+  theme_classic() +
+  theme(
+    text = element_text(family = my_font),
+    axis.text = element_text(family = my_font, size = 8, face = "bold"),
+    plot.title = element_text(family = my_font, size = 11, face = "bold", hjust = 0.5),
+    axis.line = element_blank(),
+    panel.border = element_rect(linewidth = 1, fill = "transparent"),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  labs(
+    title = "Sediment",
+    x = "NMDS1",
+    y = "NMDS2"
+  ) #+
+  #coord_fixed(ratio = 1)
+
+# Display and save the plot
+print(nmds_plot)
+```
+
+
+#Barplots
+```{r}
+Final_path <- "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/Novogene_Results/00.CleanData/Final_Dada2"
+kimbe_phyloseq_rare <- readRDS(file.path(Final_path, "kimbe_phyloseq_rare.rds"))
+
+# Filter your phyloseq object (assuming it's called ps)
+ps_sediment <- subset_samples(kimbe_phyloseq_rare, SampleType == "S")
+
+# Agglomerate at the Family level
+ps_family_sediment <- tax_glom(ps_sediment, taxrank = "Family")
+
+# Transform to relative abundance
+ps_rel_sediment <- transform_sample_counts(ps_family_sediment, function(x) x / sum(x))
+```
+
+```{r}
+top_order_sediment <- ps_rel_sediment %>% psmelt() %>% group_by(Order) %>% 
+  summarise(Abund = sum(Abundance)) %>% 
+  arrange(-Abund) %>% 
+  top_n(9) %>% 
+  pull(Order)
+
+
+order_colors_sediment <- c(
+  "Thermoanaerobaculales" = "#d98cbc",
+  "Nitrosopumilales" = "#f4a582", 
+  "Desulfobacterales" = "#99c2a2",
+  "Kiloniellales" = "#f6c7b6",  
+  "Steroidobacterales" = "#80b1b3",
+  "Pseudomonadales" = "#59a14f",     
+  "Nitrosococcales" = "#91b493",
+  "Microtrichales" = "#d1bfa7",
+  "Bacteroidales" = "#9caab7",
+  "Rhodobacterales" = "#76b7b2",   
+  "Calditrichales" = "#9ebcda",
+  "Nitrospirales" = "#c2b280",
+ "Gemmatimonadales" = "#e6a57e",
+  "Rhodothermales" = "#a9749c",
+ "Entotheonellales" = "#e3b56f",
+ "Hyphomicrobiales" = "#a3c1da",
+ "Methylococcales" = "#b5abd4",
+  "Ardenticatenales" = "#a5a46f",
+ "Enterobacterales" = "#e49f9a",
+  "Other"  = "#bab0ac"     
+)
+
+Kimbe_Sediment_Barplot <- ps_rel_sediment %>% psmelt() %>% 
+  mutate(group = Order, 
+         group = ifelse(group %in% top_order_sediment, group, "Other")) %>% 
+  group_by(Location, Sample, group) %>% 
+  summarise(Abundance = sum(Abundance, na.rm = T)) %>% 
+  mutate(group = factor(group, levels = c("Other", rev(top_order_sediment))), 
+         Location = factor(Location,
+                           levels = c("KA", "KD", "KE", "KM"),
+                           labels = c("Lagoon A", "Lagoon D", "Lagoon E", "Control")) ) %>% 
+  ggplot(aes(x = Sample, y = Abundance, fill = group)) +
+  geom_bar(stat = "identity") +
+  facet_grid2(. ~ Location, scales = "free_x", space = "free_x", 
+              switch = "y") +
+  theme_pubclean() +
+  scale_fill_manual(values = order_colors_sediment) +
+  labs(x = NULL, y = "Relative Abundance", fill = "Order") +
+  theme(axis.text.x.bottom = element_blank(),
+        text = element_text(family = my_font, size = 8),
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "right",
+        #legend.key.size = units(),
+        strip.background = element_rect(, fill = "#DCDCDC", colour = "#000"),
+    strip.text = element_text(size = 12, face = "bold"))
+```
+```{r}
+Kimbe_NMDS_Figure <- ggarrange(kimbe_nmds_plot_water, Kimbe_Water_Barplot, kimbe_nmds_plot_sediment, Kimbe_Sediment_Barplot ,labels = c("a", "b","c","d"), align = 'hv')
+
+ggsave( "/Users/oo21097/Desktop/MRES_Kimbe_Bay/Microbial_Data/figures/Kimbe/Kimbe_NMDS_Figure.jpg", plot = Kimbe_NMDS_Figure, width = 23, height = 13  , dpi = 900)
+ ```
+```
+
+
